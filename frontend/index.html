@@ -1473,12 +1473,25 @@ async function loadFundsView(symbol){
   if(!wrap) return;
   if(fundsCache[symbol]){ renderFundsView(wrap, fundsCache[symbol]); return; }
   wrap.innerHTML=`<div class="status">即時抓取近兩週資金面資料…</div>`;
+
+  // 後端一次算完近兩週三大法人+融資融券,沒有串流、拿不到真實百分比,
+  // 所以進度條用「平滑爬升」當忙碌指示:逐漸逼近 90% 但不到頂,資料一到再補到 100%。
+  const t=toast(`抓取 ${symbol} 資金面資料…`, 0);
+  t.progress(0.05, `抓取 ${symbol} 資金面資料…`);
+  let p=0.05;
+  const timer=setInterval(()=>{ p += (0.9-p)*0.08; t.progress(p); }, 400);
+
   try{
     const r=await api(`/api/stock/${symbol}/funds`);
+    clearInterval(timer);
     fundsCache[symbol]=r;
+    if(current!==symbol){ t.dismiss(); return; }   // 使用者已切到別檔,不覆蓋畫面
+    t.done(r.available ? "資金面資料已更新" : "資金面:近兩週無可用資料");
     renderFundsView(wrap, r);
   }catch(e){
-    wrap.innerHTML=`<div class="status">抓取失敗:${e}</div>`;
+    clearInterval(timer);
+    t.err("資金面抓取失敗");
+    if(current===symbol) wrap.innerHTML=`<div class="status">抓取失敗:${e}</div>`;
   }
 }
 function renderFundsView(wrap, r){
