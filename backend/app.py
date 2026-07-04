@@ -278,33 +278,87 @@ def fetch_info(code: str) -> dict:
         pass
     return data
 
+def _stock_valuation_from_twse(code: str) -> dict:
+    """從證交所 BWIBBU 全市場報表取單一台股的 本益比 / 殖利率 / 股價淨值比。
+       這是官方開放資料,不像 yfinance 的 .info 會在雲端 IP 被 Yahoo 限流回空。
+       BWIBBU 整張表已被 _get_market_report 快取(記憶體 4 小時 + DB),個股查詢很便宜。"""
+    if not code.isdigit():
+        return {}
+    try:
+        _, data = _get_market_report("BWIBBU", _fetch_bwibbu_for_date)
+        return (data or {}).get(code.strip()) or {}
+    except Exception as e:
+        print(f"BWIBBU 個股估值({code})取得失敗:{e}", file=sys.stderr)
+        return {}
+
+def _yf_fast_info(code: str) -> dict:
+    """yfinance fast_info:走的是跟 download 同一條較穩的 API,
+       在雲端 IP 上比 .info 可靠得多,拿來補市值與 52 週高低。抓不到就回空。"""
+    out = {}
+    try:
+        import yfinance as yf
+        fi = yf.Ticker(yf_symbol(code)).fast_info
+        def g(*keys):
+            for k in keys:
+                try:
+                    v = getattr(fi, k, None)
+                    if v is None and hasattr(fi, "get"):
+                        v = fi.get(k)
+                except Exception:
+                    v = None
+                if v is not None:
+                    return v
+            return None
+        out["market_cap"] = g("market_cap", "marketCap")
+        out["wk_high"]    = g("year_high", "yearHigh")
+        out["wk_low"]     = g("year_low", "yearLow")
+        out["currency"]   = g("currency")
+    except Exception:
+        pass
+    return {k: v for k, v in out.items() if v is not None}
+
 def _fetch_info_raw(code: str) -> dict:
     """公司基本資料(防呆:抓不到就回空值,不影響畫圖)。
-       名稱/產業優先序:names.json(手動覆蓋) -> 證交所上市清單(中文) -> yfinance(英文)。"""
+       名稱/產業優先序:names.json(手動覆蓋) -> 證交所上市清單(中文) -> yfinance(英文)。
+       估值(本益比/殖利率/淨值比):台股優先用證交所 BWIBBU 官方報表,避免 yfinance 在雲端被限流。"""
     info = {}
     try:
         import yfinance as yf
         info = yf.Ticker(yf_symbol(code)).info or {}
     except Exception:
         info = {}
+
+    fast = _yf_fast_info(code)                 # 市值 / 52週高低的可靠保底
+    val  = _stock_valuation_from_twse(code)    # 台股官方本益比 / 殖利率 / 淨值比
+
     ov = NAMES.get(code.upper(), {})
     tw = (twse_listed().get(code.strip()) if code.isdigit() else None) or {}
     name   = ov.get("name")   or tw.get("name")     or info.get("longName") or info.get("shortName") or code.upper()
     sector = ov.get("sector") or tw.get("industry") or info.get("sector")
+
+    # 逐欄取「第一個非空」的來源。
+    def first(*vals):
+        for v in vals:
+            if v is not None:
+                return v
+        return None
+
     return {
         "name":       name,
         "sector":     sector,
         "industry":   info.get("industry"),
-        "currency":   info.get("currency") or ("TWD" if code.isdigit() else None),
-        "market_cap": info.get("marketCap"),
-        "pe":         info.get("trailingPE"),
+        "currency":   first(info.get("currency"), fast.get("currency"), "TWD" if code.isdigit() else None),
+        "market_cap": first(info.get("marketCap"), fast.get("market_cap")),
+        "pe":         first(info.get("trailingPE"), val.get("pe")),
         "forward_pe": info.get("forwardPE"),
         "peg":        info.get("pegRatio"),
-        "pb":         info.get("priceToBook"),
-        "div_yield":  info.get("dividendYield"),
+        "pb":         first(info.get("priceToBook"), val.get("pb")),
+        # yfinance 的 dividendYield 有時是小數(0.019)有時是百分比(1.9);BWIBBU 的殖利率是百分比。
+        # 前端 fmtPct 兩種都能正確顯示,所以直接取第一個非空即可。
+        "div_yield":  first(info.get("dividendYield"), val.get("yield")),
         "earnings_growth": info.get("earningsQuarterlyGrowth"),
-        "wk_high":    info.get("fiftyTwoWeekHigh"),
-        "wk_low":     info.get("fiftyTwoWeekLow"),
+        "wk_high":    first(info.get("fiftyTwoWeekHigh"), fast.get("wk_high")),
+        "wk_low":     first(info.get("fiftyTwoWeekLow"),  fast.get("wk_low")),
     }
 
 def search_index() -> dict:
@@ -1210,9 +1264,19 @@ def stock_payload(code: str, force: bool = False, years: int = YEARS) -> dict:
         except Exception:
             pass
     dates, closes = fetch_prices(code, years=years)
+    info = fetch_info(code)
+    # 最終保底:52 週高/低若前面來源都沒拿到,直接用近一年(約252個交易日)收盤價自算。
+    # 這條一定成功,因為資料就在手上,不必再打任何外部 API。
+    if info.get("wk_high") is None or info.get("wk_low") is None:
+        recent = closes[-252:] if len(closes) >= 60 else closes
+        if recent:
+            if info.get("wk_high") is None:
+                info["wk_high"] = round(max(recent), 2)
+            if info.get("wk_low") is None:
+                info["wk_low"] = round(min(recent), 2)
     payload = {"symbol": code.upper(), "market": "台股" if code.isdigit() else "美股",
                "asof": dates[-1], "last": closes[-1], "dates": dates, "closes": closes,
-               "years": years, "info": fetch_info(code)}
+               "years": years, "info": info}
     _cache[key] = (time.time(), payload)
     return payload
 
