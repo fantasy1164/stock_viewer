@@ -94,7 +94,41 @@
   .side #list::-webkit-scrollbar{width:8px}
   .side #list::-webkit-scrollbar-thumb{background:var(--line);border-radius:999px}
   .side #list::-webkit-scrollbar-track{background:transparent}
-  @media(max-width:680px){.side{position:static;top:auto;max-height:none;display:block}.side #list{overflow:visible;max-height:none}}
+  /* 手機專用元素:預設(PC)隱藏;下方 media query 內才顯示 */
+  .drawer-fab,.drawer-backdrop{display:none}
+  .drawer-close{display:none;position:absolute;right:8px;top:8px;z-index:5;width:36px;height:36px;align-items:center;justify-content:center;
+    background:var(--ground);border:1px solid var(--line);border-radius:10px;color:var(--mist);font-size:16px;cursor:pointer}
+  /* ── 手機版(≤680px):側欄改為左側滑出「抽屜」──
+     預設收起、圖表滿版;左下角 ☰ 按鈕開啟,選股後自動收合。
+     PC 版樣式完全不受影響(全部包在 media query 內)。 */
+  @media(max-width:680px){
+    .side{position:fixed;left:0;top:0;bottom:0;width:min(320px,86vw);max-height:none;margin:0;
+      border-radius:0 16px 16px 0;transform:translateX(-105%);transition:transform .25s ease;
+      z-index:60;box-shadow:6px 0 28px var(--shadow-md);display:flex}
+    body.drawer-open .side{transform:translateX(0)}
+    body.drawer-open{overflow:hidden}                /* 抽屜開啟時鎖住背景捲動 */
+    .side #list{overflow-y:auto;-webkit-overflow-scrolling:touch}
+    /* 抽屜遮罩:點一下即關閉 */
+    .drawer-backdrop{display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:55}
+    body.drawer-open .drawer-backdrop{display:block}
+    /* 左下角浮動「清單」鈕 */
+    .drawer-fab{position:fixed;left:12px;bottom:12px;z-index:50;display:flex;align-items:center;gap:7px;
+      background:var(--accent);color:#fff;border:none;border-radius:999px;padding:12px 18px;
+      font-size:14px;font-weight:700;font-family:inherit;box-shadow:0 4px 16px var(--shadow-md);cursor:pointer}
+    body.drawer-open .drawer-fab{display:none}
+    /* 字級/主題工具列:改貼右下角橫向,不再壓住內容 */
+    .toolbar{left:auto;right:10px;top:auto;bottom:12px;transform:none;flex-direction:row;padding:4px 6px}
+    .tb-actions{flex-direction:row}
+    .fontctl{flex-direction:row}
+    .theme-toggle{border-top:none;padding-top:0;margin-top:0;border-left:1px solid var(--line);border-radius:0 8px 8px 0;padding-left:6px;margin-left:2px}
+    body{padding-bottom:76px}                        /* 幫底部兩顆浮動鈕留空間 */
+    /* 觸控目標放大(Apple/Google 建議 ≥44px) */
+    li{padding:12px 10px}
+    li .x{font-size:18px;padding:8px 10px}
+    li .nm{max-width:120px;font-size:11.5px}
+    .tab{padding-top:12px;padding-bottom:12px}
+    .drawer-close{display:flex}
+  }
   /* Tab bar：每個分頁文字完整顯示；分頁太多時整條 tab bar 水平捲動，而不是把文字截斷 */
   .tabs-row{display:flex;align-items:stretch;overflow-x:auto;overflow-y:hidden;border-bottom:1px solid var(--line);scrollbar-width:thin;scrollbar-color:var(--line) transparent;background:var(--ground);overscroll-behavior-inline:contain;scroll-behavior:smooth}
   .tabs-row::-webkit-scrollbar{height:8px}
@@ -328,10 +362,13 @@
     <button id="theme-toggle" class="theme-toggle" type="button" title="切換黑色系" aria-label="切換黑色系" aria-pressed="false">🌙</button>
   </div>
 </div>
+<div class="drawer-backdrop" id="drawer-backdrop" aria-hidden="true"></div>
+<button class="drawer-fab" id="drawer-fab" type="button" aria-label="開啟股票清單">☰ 清單</button>
 <div class="wrap">
 
   <div class="layout">
     <aside class="side">
+      <button class="drawer-close" id="drawer-close" type="button" aria-label="關閉清單">✕</button>
       <div class="tabs-row" id="tabs-row"></div>
       <div class="add">
         <input id="newsym" placeholder="代號或名稱 如 2453 / 凌群" maxlength="20" autocomplete="off">
@@ -1807,6 +1844,16 @@ function drawPE(I, thr){
   }, true);
 }
 
+/* ── 手機抽屜:清單的開合(僅 ≤680px 生效,PC 上按鈕本身就隱藏) ── */
+function openDrawer(){ document.body.classList.add("drawer-open"); }
+function closeDrawer(){ document.body.classList.remove("drawer-open"); }
+document.getElementById("drawer-fab")?.addEventListener("click", openDrawer);
+document.getElementById("drawer-close")?.addEventListener("click", closeDrawer);
+document.getElementById("drawer-backdrop")?.addEventListener("click", closeDrawer);
+document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeDrawer(); });
+// 從手機轉回寬螢幕(或旋轉)時,確保抽屜狀態不殘留
+window.matchMedia("(max-width:680px)").addEventListener?.("change", ev=>{ if(!ev.matches) closeDrawer(); });
+
 /* ── MA 線顯示開關,localStorage 持久化(預設全顯示) ── */
 const MA_KEY="sv_ma_visible";
 function loadMaVisible(){ try{ return JSON.parse(localStorage.getItem(MA_KEY))||{}; }catch(e){ return {}; } }
@@ -1827,6 +1874,11 @@ function setPeriodMonths(m){
 
 async function select(sym,force){
   current=sym; renderList(); showStatus(`即時抓取 ${sym} …`);
+  // 手機:選了股票就收抽屜、把畫面捲到圖表,不必再手動關清單/往下滑
+  if(typeof closeDrawer==="function" && window.matchMedia("(max-width:680px)").matches){
+    closeDrawer();
+    document.getElementById("main")?.scrollIntoView({behavior:"smooth",block:"start"});
+  }
   try{
     // 固定抓 15 年資料:十年線(2400日均線)要有完整 ~10 年歷史才有值,
     // 再加上最長 5 年的顯示視窗,才能讓十年線在整段視窗都顯示出來。
