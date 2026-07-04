@@ -291,52 +291,33 @@ def _stock_valuation_from_twse(code: str) -> dict:
         print(f"BWIBBU 個股估值({code})取得失敗:{e}", file=sys.stderr)
         return {}
 
-def _yf_fast_info(code: str) -> dict:
-    """yfinance fast_info:走的是跟 download 同一條較穩的 API,
-       在雲端 IP 上比 .info 可靠得多,拿來補市值與 52 週高低。抓不到就回空。"""
-    out = {}
-    try:
-        import yfinance as yf
-        fi = yf.Ticker(yf_symbol(code)).fast_info
-        def g(*keys):
-            for k in keys:
-                try:
-                    v = getattr(fi, k, None)
-                    if v is None and hasattr(fi, "get"):
-                        v = fi.get(k)
-                except Exception:
-                    v = None
-                if v is not None:
-                    return v
-            return None
-        out["market_cap"] = g("market_cap", "marketCap")
-        out["wk_high"]    = g("year_high", "yearHigh")
-        out["wk_low"]     = g("year_low", "yearLow")
-        out["currency"]   = g("currency")
-    except Exception:
-        pass
-    return {k: v for k, v in out.items() if v is not None}
-
 def _fetch_info_raw(code: str) -> dict:
     """公司基本資料(防呆:抓不到就回空值,不影響畫圖)。
-       名稱/產業優先序:names.json(手動覆蓋) -> 證交所上市清單(中文) -> yfinance(英文)。
-       估值(本益比/殖利率/淨值比):台股優先用證交所 BWIBBU 官方報表,避免 yfinance 在雲端被限流。"""
-    info = {}
-    try:
-        import yfinance as yf
-        info = yf.Ticker(yf_symbol(code)).info or {}
-    except Exception:
-        info = {}
 
-    fast = _yf_fast_info(code)                 # 市值 / 52週高低的可靠保底
-    val  = _stock_valuation_from_twse(code)    # 台股官方本益比 / 殖利率 / 淨值比
-
+    重要效能取捨:
+      - 台股(數字代號)在 Render 這種雲端 IP 上,yfinance 的 .info 幾乎必被 Yahoo 擋,
+        而且不是立刻失敗、是卡十幾秒才逾時 —— 一整排預載會把單一 worker 拖到逾時被砍。
+        所以台股「完全不打」yfinance,基本面改用證交所官方 BWIBBU(本益比/殖利率/淨值比)
+        + 上市清單(名稱/產業);52 週高低則在 stock_payload 用收盤價自算。
+      - 美股維持原本的 yfinance .info(在美股上較常成功)。
+    """
+    is_tw = code.isdigit()
     ov = NAMES.get(code.upper(), {})
-    tw = (twse_listed().get(code.strip()) if code.isdigit() else None) or {}
+    tw = (twse_listed().get(code.strip()) if is_tw else {}) or {}
+
+    info = {}
+    if not is_tw:
+        try:
+            import yfinance as yf
+            info = yf.Ticker(yf_symbol(code)).info or {}
+        except Exception:
+            info = {}
+
+    val = _stock_valuation_from_twse(code) if is_tw else {}   # 台股官方本益比 / 殖利率 / 淨值比(已快取,很便宜)
+
     name   = ov.get("name")   or tw.get("name")     or info.get("longName") or info.get("shortName") or code.upper()
     sector = ov.get("sector") or tw.get("industry") or info.get("sector")
 
-    # 逐欄取「第一個非空」的來源。
     def first(*vals):
         for v in vals:
             if v is not None:
@@ -347,8 +328,8 @@ def _fetch_info_raw(code: str) -> dict:
         "name":       name,
         "sector":     sector,
         "industry":   info.get("industry"),
-        "currency":   first(info.get("currency"), fast.get("currency"), "TWD" if code.isdigit() else None),
-        "market_cap": first(info.get("marketCap"), fast.get("market_cap")),
+        "currency":   first(info.get("currency"), "TWD" if is_tw else None),
+        "market_cap": info.get("marketCap"),            # 台股此表無市值,會是 None(可接受)
         "pe":         first(info.get("trailingPE"), val.get("pe")),
         "forward_pe": info.get("forwardPE"),
         "peg":        info.get("pegRatio"),
@@ -357,8 +338,8 @@ def _fetch_info_raw(code: str) -> dict:
         # 前端 fmtPct 兩種都能正確顯示,所以直接取第一個非空即可。
         "div_yield":  first(info.get("dividendYield"), val.get("yield")),
         "earnings_growth": info.get("earningsQuarterlyGrowth"),
-        "wk_high":    first(info.get("fiftyTwoWeekHigh"), fast.get("wk_high")),
-        "wk_low":     first(info.get("fiftyTwoWeekLow"),  fast.get("wk_low")),
+        "wk_high":    info.get("fiftyTwoWeekHigh"),      # 台股 → None,交給 stock_payload 用收盤價自算
+        "wk_low":     info.get("fiftyTwoWeekLow"),
     }
 
 def search_index() -> dict:

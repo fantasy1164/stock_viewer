@@ -6,8 +6,8 @@ services:
     plan: free
     buildCommand: pip install -r requirements.txt
     # --workers 1:免費方案只有 512MB 記憶體 + 0.1 CPU,單一 worker 最穩,也讓 SQLite 快取共用。
-    # --timeout 120:第一次抓某檔股票要向 yfinance 抓 15 年歷史,可能很慢,預設 30 秒會被 gunicorn 砍掉。
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
+    # --timeout 180:冷啟動時第一檔要抓 15 年歷史 + 首次 BWIBBU 全市場報表,留足夠時間避免 worker 被砍。
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 180
     envVars:
       # 先放 "*" 讓你能立刻測。Phase 5 會改成你的 GitHub Pages 網址,鎖緊來源。
       - key: CORS_ORIGINS
