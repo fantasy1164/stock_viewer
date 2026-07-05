@@ -85,7 +85,7 @@
   html[data-theme="dark"] .theme-toggle{color:#FBBF24}
 
   .layout{display:grid;grid-template-columns:240px 1fr;gap:16px;align-items:start}
-  @media(max-width:680px){.layout{grid-template-columns:1fr}}
+  @media(max-width:680px), (orientation:landscape) and (max-height:500px){.layout{grid-template-columns:1fr}}
 
   /* 側邊欄:黏住視窗,右側內容往下捲時仍可切換個股；高度不足時清單本身獨立捲動 */
   .side{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:0 0 10px;height:max-content;overflow:hidden;box-shadow:0 1px 4px var(--shadow-sm);
@@ -98,10 +98,11 @@
   .drawer-fab,.drawer-backdrop{display:none}
   .drawer-close{display:none;position:absolute;right:8px;top:8px;z-index:5;width:36px;height:36px;align-items:center;justify-content:center;
     background:var(--ground);border:1px solid var(--line);border-radius:10px;color:var(--mist);font-size:16px;cursor:pointer}
-  /* ── 手機版(≤680px):側欄改為左側滑出「抽屜」──
-     預設收起、圖表滿版;左下角 ☰ 按鈕開啟,選股後自動收合。
-     PC 版樣式完全不受影響(全部包在 media query 內)。 */
-  @media(max-width:680px){
+  /* ── 手機版:側欄改為左側滑出「抽屜」──
+     觸發條件:寬度 ≤680px (直式手機) 或「橫向且高度 ≤500px」(手機橫屏,如 iPhone 15 是 852×393)。
+     否則 iPhone 橫屏會誤吃到 PC 版兩欄布局,主圖被擠到剩一小格。
+     PC 版樣式完全不受影響。 */
+  @media(max-width:680px), (orientation:landscape) and (max-height:500px){
     .side{position:fixed;left:0;top:0;bottom:0;width:min(320px,86vw);max-height:none;margin:0;
       border-radius:0 16px 16px 0;transform:translateX(-105%);transition:transform .25s ease;
       z-index:60;box-shadow:6px 0 28px var(--shadow-md);display:flex}
@@ -126,9 +127,20 @@
     li{padding:12px 10px}
     li .x{font-size:18px;padding:8px 10px}
     li .nm{max-width:120px;font-size:11.5px}
-    .tab{padding-top:12px;padding-bottom:12px}
+    /* 分頁:加大觸控目標;觸控拖曳中禁止選字/長按選單;避免瀏覽器把手指移動當成頁面捲動 */
+    .tab{padding-top:12px;padding-bottom:12px;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+    .tabs-row{touch-action:pan-x}                   /* 只允許水平捲動,拖曳時避免縱向誤動作 */
     .drawer-close{display:flex}
   }
+  /* 手機橫屏(高度極小)微調:主圖不要被 wrap 的 padding 吃太多、footer 縮小,避免圖表被擠 */
+  @media (orientation:landscape) and (max-height:500px){
+    .wrap{padding:10px 12px 0}
+    body{padding-bottom:60px}
+    footer{font-size:11px;padding:6px 0}
+  }
+  /* 拖曳中的分頁視覺(觸控/滑鼠共用) */
+  .tab.dragging{opacity:.55;transform:scale(.97)}
+  .tab.drag-over{box-shadow:inset 3px 0 0 var(--accent)}
   /* Tab bar：每個分頁文字完整顯示；分頁太多時整條 tab bar 水平捲動，而不是把文字截斷 */
   .tabs-row{display:flex;align-items:stretch;overflow-x:auto;overflow-y:hidden;border-bottom:1px solid var(--line);scrollbar-width:thin;scrollbar-color:var(--line) transparent;background:var(--ground);overscroll-behavior-inline:contain;scroll-behavior:smooth}
   .tabs-row::-webkit-scrollbar{height:8px}
@@ -210,7 +222,7 @@
   .c-top .id{display:flex;align-items:baseline;gap:10px}.c-top .id .s{font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:22px;color:var(--paper)}
   .sub2{font-size:12px;color:var(--mist);letter-spacing:.04em}
   .row2{display:grid;grid-template-columns:1fr 280px;gap:14px;align-items:start}
-  @media(max-width:680px){.row2{grid-template-columns:1fr}}
+  @media(max-width:680px), (orientation:landscape) and (max-height:500px){.row2{grid-template-columns:1fr}}
   .subt2{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:8px}
   .col-chart{display:flex;flex-direction:column;gap:10px;min-width:0}
   .col-quad{display:flex;flex-direction:column;gap:10px}
@@ -268,7 +280,7 @@
   .ctab.active{background:var(--accent-s);border-color:var(--accent);color:var(--accent);font-weight:600}
   /* PE 視圖 */
   .pe-wrap{display:grid;grid-template-columns:1fr 240px;gap:14px;align-items:start}
-  @media(max-width:680px){.pe-wrap{grid-template-columns:1fr}}
+  @media(max-width:680px), (orientation:landscape) and (max-height:500px){.pe-wrap{grid-template-columns:1fr}}
   .pe-chart-area{display:flex;flex-direction:column;gap:6px}
   .pe-note{font-size:11px;color:var(--faint)}
   .pe-aside{display:flex;flex-direction:column;gap:10px}
@@ -420,23 +432,57 @@ const Store = (()=>{
   const now=()=>new Date().toISOString().slice(0,19);
   let state=null;
 
+  const MIGRATION_KEY = "sv_migrated_v2";       // 一次性遷移用的 flag,避免使用者改回舊名後又被再遷移
   function seed(){
-    return { nextId:4, tabs:[
-      {id:1,label:"自選清單",pos:0,kind:"normal",color:"sky",
+    // 新用戶的預設分頁順序:熱門股(唯讀)在最前面,接著自己整理的清單。
+    return { nextId:6, tabs:[
+      {id:1,label:"熱門股",pos:0,kind:"hot",color:"orange",items:[]},
+      {id:2,label:"台股",pos:1,kind:"normal",color:"sky",
        items:[{symbol:"2453",name:"凌群電腦",added_at:now()}]},
-      {id:2,label:"觀察中",pos:1,kind:"normal",color:"emerald",items:[]},
-      {id:3,label:"熱門股",pos:2,kind:"hot",color:"orange",items:[]},
+      {id:3,label:"美股",pos:2,kind:"normal",color:"emerald",items:[]},
+      {id:4,label:"自訂清單A",pos:3,kind:"normal",color:"violet",items:[]},
+      {id:5,label:"自訂清單B",pos:4,kind:"normal",color:"rose",items:[]},
     ]};
+  }
+  function migrateOnce(s){
+    // 一次性:若使用者仍用舊版預設(自選清單/觀察中/熱門股在最後),就升級到新版順序與名稱。
+    // 使用者手動改過的名字/自建的分頁一律保留;只做 4 件事:重排 hot 到最前、改預設名字、補齊自訂清單 A/B。
+    if(localStorage.getItem(MIGRATION_KEY)) return s;
+    try {
+      s.tabs.forEach(t=>{
+        if(t.label==="自選清單") t.label="台股";
+        else if(t.label==="觀察中") t.label="美股";
+      });
+      // 熱門股移到 pos 0,其他分頁依原順序往後排。
+      const hot = s.tabs.find(t=>t.kind==="hot");
+      const rest = s.tabs.filter(t=>t.kind!=="hot").sort((a,b)=>a.pos-b.pos);
+      if(hot){ hot.pos = 0; rest.forEach((t,i)=> t.pos = i+1); }
+      // 補齊「自訂清單A / B」(若已存在同名分頁就不重複建立)。
+      const labels = new Set(s.tabs.map(t=>t.label));
+      let nextPos = s.tabs.reduce((m,t)=>Math.max(m,t.pos),-1)+1;
+      ["自訂清單A","自訂清單B"].forEach((lb,i)=>{
+        if(labels.has(lb)) return;
+        s.tabs.push({id: s.nextId++, label: lb, pos: nextPos++, kind:"normal",
+                     color: ["violet","rose","teal","indigo"][i%4]});
+      });
+      // items 陣列補正(舊資料若沒有此欄位)
+      s.tabs.forEach(t=>{ if(!Array.isArray(t.items)) t.items=[]; });
+    } catch(e){ /* 遷移失敗就當沒發生,不影響原資料 */ }
+    localStorage.setItem(MIGRATION_KEY, "1");
+    return s;
   }
   function load(){
     if(state) return state;
     try{ const s=JSON.parse(localStorage.getItem(KEY)); if(s&&Array.isArray(s.tabs)) state=s; }catch(e){}
     if(!state) state=seed();
+    else state=migrateOnce(state);          // 舊使用者升級到新版預設順序/名稱(只跑一次)
     // 保險:確保一定有一個 hot 分頁(舊資料遷移用)
     if(!state.tabs.some(t=>t.kind==="hot")){
-      const maxPos=state.tabs.reduce((m,t)=>Math.max(m,t.pos),-1)+1;
-      state.tabs.push({id:state.nextId++,label:"熱門股",pos:maxPos,kind:"hot",color:"orange",items:[]});
+      state.tabs.forEach(t=> t.pos = (t.pos|0) + 1);
+      state.tabs.push({id:state.nextId++,label:"熱門股",pos:0,kind:"hot",color:"orange",items:[]});
     }
+    // 一律 persist 一次(讓遷移結果落地)
+    try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){}
     return state;
   }
   function save(){ try{ localStorage.setItem(KEY, JSON.stringify(load())); }catch(e){} }
@@ -591,7 +637,62 @@ function renderTabs(){
   const addBtn=document.getElementById("tab-add");
   if(addBtn) addBtn.addEventListener("click", createTab);
   bindTabBarScroll(row);
+  attachTouchTabDrag(row);                                // 手機用 Pointer Events 做觸控拖曳(HTML5 drag 在觸控裝置不動作)
   requestAnimationFrame(scrollActiveTabIntoView);
+}
+
+/* ── 觸控裝置的分頁拖曳排序 ──
+   HTML5 drag & drop API 在絕大多數觸控瀏覽器上根本不觸發,所以手機/平板上的分頁一直沒法拖。
+   這裡用 Pointer Events 自己實作:只攔 pointerType==='touch',滑鼠事件完全不動、仍走原本 HTML5 drag 那條路。
+   UX:輕點=切分頁(閾值內);長按拖=排序(超過閾值)。 */
+function attachTouchTabDrag(row){
+  if(!row || row.dataset.touchDragBound==="1") return;
+  row.dataset.touchDragBound="1";
+
+  row.addEventListener("pointerdown", e=>{
+    if(e.pointerType!=="touch") return;                    // 只處理觸控
+    const tab = e.target.closest?.(".tab");
+    if(!tab) return;
+    if(tab.querySelector("input")) return;                 // 分頁正在改名中,不啟動拖曳
+    if(e.target.closest?.(".tab-del")) return;             // 點的是刪除鈕,交給它自己
+
+    const startX = e.clientX, startY = e.clientY;
+    const tabId = tab.dataset.tid|0;
+    let dragging = false, hover = null;
+
+    const onMove = ev=>{
+      const dx = ev.clientX - startX, dy = ev.clientY - startY;
+      if(!dragging){
+        if(Math.hypot(dx, dy) < 10) return;               // 手指抖動閾值,避免影響單點切分頁
+        dragging = true;
+        tab.classList.add("dragging");
+      }
+      // 找目前指標下的 tab 當放置目標
+      const under = document.elementFromPoint(ev.clientX, ev.clientY);
+      const target = under?.closest?.(".tab");
+      if(hover && hover!==target) hover.classList.remove("drag-over");
+      if(target && target!==tab){ target.classList.add("drag-over"); hover=target; }
+      else if(!target){ hover=null; }
+    };
+    const finish = ev=>{
+      row.removeEventListener("pointermove", onMove);
+      row.removeEventListener("pointerup", finish);
+      row.removeEventListener("pointercancel", finish);
+      try{ row.releasePointerCapture(e.pointerId); }catch(_){}
+      tab.classList.remove("dragging");
+      if(hover) hover.classList.remove("drag-over");
+      if(dragging && hover && hover!==tab){
+        reorderTabs(tabId, hover.dataset.tid|0);
+        ev.preventDefault?.();                             // 拖曳完成:別再觸發 click 切換分頁
+        ev.stopPropagation?.();
+      }
+    };
+
+    try{ row.setPointerCapture(e.pointerId); }catch(_){}
+    row.addEventListener("pointermove", onMove, {passive:true});
+    row.addEventListener("pointerup", finish);
+    row.addEventListener("pointercancel", finish);
+  });
 }
 
 function bindTabBarScroll(row){
@@ -1844,15 +1945,20 @@ function drawPE(I, thr){
   }, true);
 }
 
-/* ── 手機抽屜:清單的開合(僅 ≤680px 生效,PC 上按鈕本身就隱藏) ── */
+/* ── 手機抽屜:清單的開合 ──
+   MOBILE_MQ 是「什麼時候算手機」的單一事實來源,與 CSS 手機規則的條件一致:
+   ≤680px(直式手機) 或 「橫向且高度 ≤500px」(手機橫屏,如 iPhone 15 是 852×393)。
+   PC 上按鈕本身就隱藏,這段 JS 只有手機/橫屏用得到。 */
+const MOBILE_MQ = window.matchMedia("(max-width:680px), (orientation:landscape) and (max-height:500px)");
+const isMobile = () => MOBILE_MQ.matches;
 function openDrawer(){ document.body.classList.add("drawer-open"); }
 function closeDrawer(){ document.body.classList.remove("drawer-open"); }
 document.getElementById("drawer-fab")?.addEventListener("click", openDrawer);
 document.getElementById("drawer-close")?.addEventListener("click", closeDrawer);
 document.getElementById("drawer-backdrop")?.addEventListener("click", closeDrawer);
 document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeDrawer(); });
-// 從手機轉回寬螢幕(或旋轉)時,確保抽屜狀態不殘留
-window.matchMedia("(max-width:680px)").addEventListener?.("change", ev=>{ if(!ev.matches) closeDrawer(); });
+// 從手機轉回寬螢幕(或旋轉)時,確保抽屜狀態不殘留;圖表可能也要跟著重排,交給 resize 事件自己觸發
+MOBILE_MQ.addEventListener?.("change", ev=>{ if(!ev.matches) closeDrawer(); });
 
 /* ── MA 線顯示開關,localStorage 持久化(預設全顯示) ── */
 const MA_KEY="sv_ma_visible";
@@ -1875,7 +1981,7 @@ function setPeriodMonths(m){
 async function select(sym,force){
   current=sym; renderList(); showStatus(`即時抓取 ${sym} …`);
   // 手機:選了股票就收抽屜、把畫面捲到圖表,不必再手動關清單/往下滑
-  if(typeof closeDrawer==="function" && window.matchMedia("(max-width:680px)").matches){
+  if(typeof closeDrawer==="function" && isMobile()){
     closeDrawer();
     document.getElementById("main")?.scrollIntoView({behavior:"smooth",block:"start"});
   }
