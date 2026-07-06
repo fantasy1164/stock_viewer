@@ -149,6 +149,7 @@
   .m-editbar{display:none}                                   /* 只在手機顯示(media query 內開) */
   .m-editbar button{width:100%;padding:10px;background:var(--ground);border:none;border-bottom:1px solid var(--line);
     color:var(--accent);font-size:14px;font-weight:700;font-family:inherit;cursor:pointer}
+  .m-ver{font-size:10px;font-weight:400;color:var(--faint);margin-left:6px}
   body.m-edit .m-editbar button{background:var(--accent-s)}
   .m-nudge{min-width:40px;min-height:40px;border:1px solid var(--line);border-radius:9px;background:var(--panel);
     color:var(--paper);font-size:15px;cursor:pointer;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center}
@@ -402,7 +403,7 @@
     <aside class="side">
       <button class="drawer-close" id="drawer-close" type="button" aria-label="關閉清單">✕</button>
       <div class="m-editbar">
-        <button id="m-edit-toggle" type="button">↕ 排序</button>
+        <button id="m-edit-toggle" type="button">↕ 排序 <span class="m-ver">v3.1</span></button>
       </div>
       <div class="tabs-row" id="tabs-row"></div>
       <div class="add">
@@ -687,13 +688,18 @@ function renderTabs(){
      • 按「完成」退出
    PC 版完全不受影響,仍用滑鼠拖曳。
    ══════════════════════════════════════════════════════════════ */
+/* 版本標記:每次改前端就 +1。
+   用途:手機/PC 一眼確認「目前跑的是哪一版」,徹底排除瀏覽器快取吃到舊版的猜測時間。 */
+const APP_VER = "v3.1";
+console.log(`stock-viewer ${APP_VER}`);
+
 let mobileEdit = false;
 
 function toggleMobileEdit(){
   mobileEdit = !mobileEdit;
   document.body.classList.toggle("m-edit", mobileEdit);
   const btn=document.getElementById("m-edit-toggle");
-  if(btn) btn.textContent = mobileEdit ? "✓ 完成" : "↕ 排序";
+  if(btn) btn.innerHTML = (mobileEdit ? "✓ 完成" : "↕ 排序") + ` <span class="m-ver">${APP_VER}</span>`;
   renderTabs(); renderList();
 }
 
@@ -863,6 +869,7 @@ function renderList(){
     const market=getHotMarket();
     const shown = market==="tw" ? tw : us;
     ul.innerHTML = `
+      ${isMobile()&&mobileEdit ? `<li class="hot-empty">「熱門股」是系統自動清單,無法排序。請切換到台股/美股/自訂清單使用 ▲▼⇄。</li>` : ""}
       <li class="hot-toggle">
         <div class="seg">
           <button data-mk="tw" class="${market==='tw'?'active':''}">台股 <span class="cnt">${tw.length}</span></button>
