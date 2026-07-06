@@ -162,6 +162,7 @@
   .m-move-hint{font-size:12px;color:var(--mist);flex-shrink:0}
   .m-move-btn{padding:8px 14px;border:1px solid var(--accent);border-radius:999px;background:var(--panel);
     color:var(--accent);font-size:13px;font-weight:600;font-family:inherit;cursor:pointer}
+  li .x.fav{color:var(--accent);font-weight:700}
   /* Tab bar：每個分頁文字完整顯示；分頁太多時整條 tab bar 水平捲動，而不是把文字截斷 */
   .tabs-row{display:flex;align-items:stretch;overflow-x:auto;overflow-y:hidden;border-bottom:1px solid var(--line);scrollbar-width:thin;scrollbar-color:var(--line) transparent;background:var(--ground);overscroll-behavior-inline:contain;scroll-behavior:smooth}
   .tabs-row::-webkit-scrollbar{height:8px}
@@ -403,7 +404,7 @@
     <aside class="side">
       <button class="drawer-close" id="drawer-close" type="button" aria-label="關閉清單">✕</button>
       <div class="m-editbar">
-        <button id="m-edit-toggle" type="button">↕ 排序 <span class="m-ver">v3.1</span></button>
+        <button id="m-edit-toggle" type="button">↕ 排序 <span class="m-ver">v3.2</span></button>
       </div>
       <div class="tabs-row" id="tabs-row"></div>
       <div class="add">
@@ -515,7 +516,11 @@ const Store = (()=>{
     const used=new Set(load().tabs.map(t=>t.color));
     return PALETTE.find(c=>!used.has(c)) || PALETTE[load().tabs.length % PALETTE.length];
   }
-  function hasSymbol(sym){ return load().tabs.some(t=>(t.items||[]).some(w=>w.symbol===sym)); }
+  function hasSymbol(sym){
+    // 只檢查「使用者自己的」分頁;熱門股是系統排行,不算入重複——
+    // 否則從熱門股按「＋ 收藏」會被「已在清單中」擋掉。
+    return load().tabs.some(t=>t.kind!=="hot" && (t.items||[]).some(w=>w.symbol===sym));
+  }
 
   return {
     hasSymbol,
@@ -549,15 +554,26 @@ const Store = (()=>{
       save(); return {ok:true};
     },
     deleteItem(sym){
-      load().tabs.forEach(t=> t.items=(t.items||[]).filter(w=>w.symbol!==sym));
+      // 只從「使用者的」分頁刪除;熱門股是市場排行,不因使用者刪自己清單而消失。
+      load().tabs.forEach(t=>{ if(t.kind!=="hot") t.items=(t.items||[]).filter(w=>w.symbol!==sym); });
       save();
     },
     moveItem(sym,toTabId){
       const s=load(); let moved=null;
-      s.tabs.forEach(t=>{ const i=(t.items||[]).findIndex(w=>w.symbol===sym);
+      // 先在使用者分頁找:找到就是真正的「搬移」(splice 走)
+      s.tabs.forEach(t=>{ if(t.kind==="hot") return;
+        const i=(t.items||[]).findIndex(w=>w.symbol===sym);
         if(i>=0) moved=t.items.splice(i,1)[0]; });
+      // 使用者分頁沒有 → 來源是熱門股:改為「複製」語意,排行保持原樣
+      if(!moved){
+        for(const t of s.tabs){ if(t.kind!=="hot") continue;
+          const w=(t.items||[]).find(x=>x.symbol===sym);
+          if(w){ moved={...w, added_at:now()}; break; } }
+      }
       const dest=tab(toTabId);
-      if(dest&&moved){ (dest.items=dest.items||[]).push(moved); }
+      if(dest&&moved && !(dest.items||[]).some(w=>w.symbol===sym)){
+        (dest.items=dest.items||[]).push(moved);
+      }
       save();
     },
     reorderItems(tabId,order){
@@ -567,14 +583,12 @@ const Store = (()=>{
       t.items = order.map(s=>by[s]).filter(Boolean).concat(rest);
       save();
     },
-    /* 熱門股:用後端 /api/hot 回傳的清單覆蓋 hot 分頁;
-       已存在於使用者其他分頁的代號會跳過,不動使用者整理好的清單。 */
+    /* 熱門股:用後端 /api/hot 回傳的清單覆蓋 hot 分頁。
+       不過濾使用者已收藏的代號——熱門股是市場排行,應顯示完整真貌;
+       同一檔股票可以同時出現在排行與你的清單(收藏是「複製」不是「搬走」)。 */
     setHotItems(rows){
       const s=load(); const hot=s.tabs.find(t=>t.kind==="hot"); if(!hot) return;
-      const ownedElsewhere=new Set();
-      s.tabs.forEach(t=>{ if(t.kind!=="hot") (t.items||[]).forEach(w=>ownedElsewhere.add(w.symbol)); });
-      hot.items = (rows||[]).filter(r=>!ownedElsewhere.has(r.symbol))
-                            .map(r=>({symbol:r.symbol, name:r.name, added_at:now()}));
+      hot.items = (rows||[]).map(r=>({symbol:r.symbol, name:r.name, added_at:now()}));
       save();
     },
     /* 匯出/匯入:換裝置或清瀏覽器前備份用 */
@@ -690,7 +704,7 @@ function renderTabs(){
    ══════════════════════════════════════════════════════════════ */
 /* 版本標記:每次改前端就 +1。
    用途:手機/PC 一眼確認「目前跑的是哪一版」,徹底排除瀏覽器快取吃到舊版的猜測時間。 */
-const APP_VER = "v3.1";
+const APP_VER = "v3.2";
 console.log(`stock-viewer ${APP_VER}`);
 
 let mobileEdit = false;
@@ -730,15 +744,27 @@ function toggleMoveMenu(li, sym){
   const existing = li.nextElementSibling;
   if(existing && existing.classList.contains("m-move-menu")){ existing.remove(); return; }
   document.querySelectorAll(".m-move-menu").forEach(m=>m.remove());   // 同時間只開一個
+  const hot = isHotTab();
   const menu = document.createElement("li");
   menu.className = "m-move-menu";
-  menu.innerHTML = `<span class="m-move-hint">移至:</span>` + tabs
+  menu.innerHTML = `<span class="m-move-hint">${hot?"收藏至:":"移至:"}</span>` + tabs
     .filter(t=>t.kind!=="hot" && t.id!==currentTab)
     .map(t=>`<button class="m-move-btn" data-mv="${t.id}">${escH(t.label)}</button>`).join("");
   menu.querySelectorAll(".m-move-btn").forEach(b=>{
     b.addEventListener("click", async ()=>{
-      Store.moveItem(sym, b.dataset.mv|0);
-      await loadAll();
+      const destId = b.dataset.mv|0;
+      const destLabel = tabs.find(t=>t.id===destId)?.label || "";
+      if(hot){
+        // 熱門股 →「收藏」:複製到目標清單,熱門股列表保持原樣(它是市場排行,不因收藏而消失)
+        const item = currentItems().find(w=>w.symbol===sym);
+        const r = Store.addItem(sym, item?.name || sym, destId);
+        if(r && r.error){ toast(`${sym}:${r.error}`); return; }
+        toast(`已收藏 ${sym} 至「${destLabel}」`);
+        await loadAll();
+      }else{
+        Store.moveItem(sym, destId);
+        await loadAll();
+      }
     });
   });
   li.after(menu);
@@ -832,15 +858,24 @@ function isHotTab(){ const t=currentTabObj(); return !!t && t.kind==="hot"; }
 function liHTML(w){
   // 手機不用 HTML5 drag;排序走「編輯模式」按鈕(▲ ▼ ⇄)。
   const drag = !isMobile();
-  const edit = isMobile() && mobileEdit && !isHotTab();   // 熱門股唯讀,不進編輯
-  const tail = edit
-    ? `<span class="m-tools">
+  const hot = isHotTab();
+  const edit = isMobile() && mobileEdit && !hot;   // 熱門股唯讀,不進排序編輯
+  let tail;
+  if(edit){
+    tail = `<span class="m-tools">
          <button class="m-nudge" data-up="${w.symbol}">▲</button>
          <button class="m-nudge" data-down="${w.symbol}">▼</button>
          <button class="m-nudge m-move" data-move="${w.symbol}" title="移至其他分頁">⇄</button>
-       </span>`
-    : `<span class="li-badges" data-badge="${w.symbol}">${renderBadgeHTML(w.symbol)}</span>
+       </span>`;
+  }else if(hot){
+    // 熱門股:× 刪除沒有意義(刷新就回來),改成「＋ 收藏至我的清單」——
+    // 這是從熱門股發現新標的、直接收進自己清單的主要動線,手機/PC 都常駐顯示。
+    tail = `<span class="li-badges" data-badge="${w.symbol}">${renderBadgeHTML(w.symbol)}</span>
+      <button class="x fav" data-fav="${w.symbol}" title="收藏至我的清單">＋</button>`;
+  }else{
+    tail = `<span class="li-badges" data-badge="${w.symbol}">${renderBadgeHTML(w.symbol)}</span>
       <button class="x" data-del="${w.symbol}">×</button>`;
+  }
   return `<li draggable="${drag}" data-sym="${w.symbol}" class="${w.symbol===current?'active':''}">
       <span class="grip">⠿</span>
       <span class="li-id"><span class="sym">${w.symbol}</span><span class="nm">${escH(w.name&&w.name!==w.symbol?w.name:"")}</span></span>
@@ -869,7 +904,7 @@ function renderList(){
     const market=getHotMarket();
     const shown = market==="tw" ? tw : us;
     ul.innerHTML = `
-      ${isMobile()&&mobileEdit ? `<li class="hot-empty">「熱門股」是系統自動清單,無法排序。請切換到台股/美股/自訂清單使用 ▲▼⇄。</li>` : ""}
+      ${isMobile()&&mobileEdit ? `<li class="hot-empty">「熱門股」是系統排行,無法排序;點個股右側的 ＋ 可收藏至你的清單。</li>` : ""}
       <li class="hot-toggle">
         <div class="seg">
           <button data-mk="tw" class="${market==='tw'?'active':''}">台股 <span class="cnt">${tw.length}</span></button>
@@ -888,11 +923,15 @@ function renderList(){
   let draggingSym=null;
   ul.querySelectorAll("li[data-sym]").forEach(li=>{
     li.addEventListener("click", e=>{
-      // 編輯模式按鈕或刪除鈕:不觸發選股
-      if(e.target.dataset.del || e.target.closest?.(".m-tools")) return;
+      // 編輯模式按鈕、刪除鈕、收藏鈕:不觸發選股
+      if(e.target.dataset.del || e.target.dataset.fav || e.target.closest?.(".m-tools")) return;
       select(li.dataset.sym);
     });
-    li.querySelector(".x")?.addEventListener("click", e=>{ e.stopPropagation(); del(li.dataset.sym); });
+    li.querySelector(".x")?.addEventListener("click", e=>{
+      e.stopPropagation();
+      if(e.target.dataset.fav) toggleMoveMenu(li, li.dataset.sym);   // 熱門股:＋ 展開「收藏至」選單
+      else del(li.dataset.sym);
+    });
 
     // 編輯模式:▲ ▼ ⇄ 按鈕
     li.querySelector("[data-up]")  ?.addEventListener("click", e=>{ e.stopPropagation(); nudgeItem(li.dataset.sym, -1); });
