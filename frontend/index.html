@@ -133,6 +133,7 @@
     .tab{padding-top:12px;padding-bottom:12px;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
     .tabs-row{touch-action:pan-x}                   /* 只允許水平捲動,拖曳時避免縱向誤動作 */
     .drawer-close{display:flex}
+    .side .m-editbar{display:block}                  /* 手機顯示「排序」切換鈕(較高權重,不受後方基礎規則覆蓋) */
   }
   /* 手機橫屏(高度極小)微調:主圖不要被 wrap 的 padding 吃太多、footer 縮小,避免圖表被擠 */
   @media (orientation:landscape) and (max-height:500px){
@@ -140,11 +141,26 @@
     body{padding-bottom:60px}
     footer{font-size:11px;padding:6px 0}
   }
-  /* 拖曳中的分頁視覺(觸控/滑鼠共用) */
+  /* 拖曳中視覺(PC 滑鼠拖曳用) */
   .tab.dragging{opacity:.55;transform:scale(.97)}
   .tab.drag-over{box-shadow:inset 3px 0 0 var(--accent)}
-  /* 觸控拖曳中:鎖住全域手勢,避免瀏覽器把手指移動判成頁面捲動,同時避免選字 */
-  body.tab-dragging,body.tab-dragging *{touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+
+  /* ── 手機編輯模式(排序靠按鈕,不靠手勢) ── */
+  .m-editbar{display:none}                                   /* 只在手機顯示(media query 內開) */
+  .m-editbar button{width:100%;padding:10px;background:var(--ground);border:none;border-bottom:1px solid var(--line);
+    color:var(--accent);font-size:14px;font-weight:700;font-family:inherit;cursor:pointer}
+  body.m-edit .m-editbar button{background:var(--accent-s)}
+  .m-nudge{min-width:40px;min-height:40px;border:1px solid var(--line);border-radius:9px;background:var(--panel);
+    color:var(--paper);font-size:15px;cursor:pointer;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center}
+  .m-nudge:disabled{opacity:.3}
+  .m-nudge.m-move{color:var(--accent)}
+  .tab .m-nudge{min-width:34px;min-height:34px;font-size:12px;margin:0 2px}
+  li .m-tools{display:flex;gap:6px;margin-left:auto;flex-shrink:0}
+  .m-move-menu{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 10px;background:var(--accent-s);
+    border-radius:9px;cursor:default}
+  .m-move-hint{font-size:12px;color:var(--mist);flex-shrink:0}
+  .m-move-btn{padding:8px 14px;border:1px solid var(--accent);border-radius:999px;background:var(--panel);
+    color:var(--accent);font-size:13px;font-weight:600;font-family:inherit;cursor:pointer}
   /* Tab bar：每個分頁文字完整顯示；分頁太多時整條 tab bar 水平捲動，而不是把文字截斷 */
   .tabs-row{display:flex;align-items:stretch;overflow-x:auto;overflow-y:hidden;border-bottom:1px solid var(--line);scrollbar-width:thin;scrollbar-color:var(--line) transparent;background:var(--ground);overscroll-behavior-inline:contain;scroll-behavior:smooth}
   .tabs-row::-webkit-scrollbar{height:8px}
@@ -385,6 +401,9 @@
   <div class="layout">
     <aside class="side">
       <button class="drawer-close" id="drawer-close" type="button" aria-label="關閉清單">✕</button>
+      <div class="m-editbar">
+        <button id="m-edit-toggle" type="button">↕ 排序</button>
+      </div>
       <div class="tabs-row" id="tabs-row"></div>
       <div class="add">
         <input id="newsym" placeholder="代號或名稱 如 2453 / 凌群" maxlength="20" autocomplete="off">
@@ -596,16 +615,26 @@ let tabs=[], currentTab=null, current=null, currentData=null, activeView="trend"
 /* ── Tab 渲染 ── */
 function renderTabs(){
   const row=document.getElementById("tabs-row");
-  // 手機時 draggable=false:HTML5 native drag 對觸控無效,但 draggable="true" 這個屬性本身
-  // 會讓瀏覽器把手指按住的動作攔截去等 drag gesture,反而卡住 pointer 事件與捲動判定,
-  // 造成「Tab 無法左右拖」「清單無法縱向捲」兩個 bug 的共同根因。
+  // 手機不用 HTML5 drag(觸控上無效且會干擾捲動),排序走「編輯模式」按鈕。
   const drag = !isMobile();
-  row.innerHTML = tabs.map(t=>`
+  const edit = isMobile() && mobileEdit;
+  row.innerHTML = tabs.map((t,i)=>`
     <div class="tab${t.id===currentTab?' active':''}" draggable="${drag}" data-tid="${t.id}" data-color="${t.color||'slate'}" title="${escH(t.label)}">
+      ${edit?`<button class="m-nudge" data-tab-left="${t.id}" ${i===0?'disabled':''}>◀</button>`:""}
       <span class="tabdot"></span><span class="lbl">${escH(t.label)}</span>
-      ${t.kind!=='hot' ? `<span class="tab-del" data-del-tab="${t.id}" title="刪除分頁">×</span>` : ""}
+      ${edit?`<button class="m-nudge" data-tab-right="${t.id}" ${i===tabs.length-1?'disabled':''}>▶</button>`
+            : (t.kind!=='hot' ? `<span class="tab-del" data-del-tab="${t.id}" title="刪除分頁">×</span>` : "")}
     </div>`).join("")
     + `<div class="tab-add" id="tab-add" title="新增分頁">＋</div>`;
+
+  // 編輯模式的 ◀ ▶(先綁,並且 stopPropagation 避免觸發切分頁)
+  row.querySelectorAll(".m-nudge").forEach(b=>{
+    b.addEventListener("click", e=>{
+      e.stopPropagation();
+      if(b.dataset.tabLeft)  nudgeTab(b.dataset.tabLeft|0,  -1);
+      if(b.dataset.tabRight) nudgeTab(b.dataset.tabRight|0, +1);
+    });
+  });
 
   document.querySelectorAll(".tab").forEach(el=>{
     let clickTimer=null;
@@ -645,81 +674,68 @@ function renderTabs(){
   const addBtn=document.getElementById("tab-add");
   if(addBtn) addBtn.addEventListener("click", createTab);
   bindTabBarScroll(row);
-  attachTouchTabDrag(row);                                // 手機用 Pointer Events 做觸控拖曳(HTML5 drag 在觸控裝置不動作)
   requestAnimationFrame(scrollActiveTabIntoView);
 }
 
-/* ── 觸控裝置的分頁拖曳排序 ──
-   HTML5 drag & drop API 在觸控裝置根本不觸發,所以手機/平板上的分頁一直沒法拖。
-   這裡用 Pointer Events 自己實作,並採「長按啟動」模式:
-     • 輕點/輕滑 → 切分頁 / 讓瀏覽器捲動 tab bar(沒進入拖曳,不影響其他手勢)
-     • 長按 ≥400ms 且手指沒明顯移動 → 進入拖曳模式(振動回饋、鎖全域捲動、hit-test 換位)
-   這樣捲 tab bar 跟拖排序兩個手勢明確分離,不會互卡。 */
-function attachTouchTabDrag(row){
-  if(!row || row.dataset.touchDragBound==="1") return;
-  row.dataset.touchDragBound="1";
+/* ══════════════════════════════════════════════════════════════
+   手機「編輯模式」—— 排序不靠手勢,靠按鈕。
+   拖曳手勢(HTML5 drag、pointer 長按)在行動瀏覽器上與捲動/選字/系統手勢
+   衝突太多且各家行為不一,實測不可靠。所以手機版徹底放棄拖曳,改用
+   iOS 原生列表「編輯模式」的模式:
+     • 平常:清單純捲動+點選+刪除,零手勢攔截 → 捲動絕對順
+     • 按「排序」進入編輯模式:分頁出現 ◀ ▶、股票出現 ▲ ▼ 與 ⇄(移至其他分頁)
+     • 按「完成」退出
+   PC 版完全不受影響,仍用滑鼠拖曳。
+   ══════════════════════════════════════════════════════════════ */
+let mobileEdit = false;
 
-  row.addEventListener("pointerdown", e=>{
-    if(e.pointerType!=="touch") return;                    // 只處理觸控
-    const tab = e.target.closest?.(".tab");
-    if(!tab) return;
-    if(tab.querySelector("input")) return;                 // 分頁正在改名中,不啟動拖曳
-    if(e.target.closest?.(".tab-del")) return;             // 點的是刪除鈕,交給它自己
+function toggleMobileEdit(){
+  mobileEdit = !mobileEdit;
+  document.body.classList.toggle("m-edit", mobileEdit);
+  const btn=document.getElementById("m-edit-toggle");
+  if(btn) btn.textContent = mobileEdit ? "✓ 完成" : "↕ 排序";
+  renderTabs(); renderList();
+}
 
-    const startX = e.clientX, startY = e.clientY;
-    const tabId = tab.dataset.tid|0;
-    let dragging = false, hover = null;
+/* 分頁左移/右移一格 */
+function nudgeTab(tid, dir){
+  const order = tabs.map(t=>t.id);
+  const i = order.indexOf(tid);
+  const j = i + dir;
+  if(i<0 || j<0 || j>=order.length) return;
+  [order[i], order[j]] = [order[j], order[i]];
+  Store.reorderTabs(order);
+  loadAll();
+}
 
-    const cleanup = ()=>{
-      clearTimeout(pressTimer);
-      row.removeEventListener("pointermove", onMove);
-      row.removeEventListener("pointerup", finish);
-      row.removeEventListener("pointercancel", finish);
-    };
+/* 股票在目前分頁內上移/下移一格 */
+function nudgeItem(sym, dir){
+  const cur = currentItems().map(w=>w.symbol);
+  const i = cur.indexOf(sym);
+  const j = i + dir;
+  if(i<0 || j<0 || j>=cur.length) return;
+  [cur[i], cur[j]] = [cur[j], cur[i]];
+  Store.reorderItems(currentTab, cur);
+  loadAll();
+}
 
-    // 400ms 長按啟動拖曳:進入前 preventDefault 才能真正阻止瀏覽器接管為捲動
-    const pressTimer = setTimeout(()=>{
-      dragging = true;
-      tab.classList.add("dragging");
-      document.body.classList.add("tab-dragging");         // 觸發 CSS: 全域 touch-action:none
-      try{ row.setPointerCapture(e.pointerId); }catch(_){}
-      if(navigator.vibrate) navigator.vibrate(35);         // 觸覺回饋:確認進入拖曳模式
-    }, 400);
-
-    const onMove = ev=>{
-      const dx = ev.clientX - startX, dy = ev.clientY - startY;
-      if(!dragging){
-        // 未進入拖曳:手指超過閾值就取消長按判定,讓瀏覽器接管為捲動(不干擾使用者橫滑 tab bar)
-        if(Math.hypot(dx, dy) > 12) cleanup();
-        return;
-      }
-      ev.preventDefault();                                  // 已進入拖曳:阻止一切預設手勢
-      // hit-test 找目前指標下的 tab
-      const under = document.elementFromPoint(ev.clientX, ev.clientY);
-      const target = under?.closest?.(".tab");
-      if(hover && hover!==target) hover.classList.remove("drag-over");
-      if(target && target!==tab){ target.classList.add("drag-over"); hover=target; }
-      else if(!target){ hover=null; }
-    };
-
-    const finish = ev=>{
-      cleanup();
-      try{ row.releasePointerCapture(e.pointerId); }catch(_){}
-      tab.classList.remove("dragging");
-      document.body.classList.remove("tab-dragging");
-      if(hover) hover.classList.remove("drag-over");
-      if(dragging && hover && hover!==tab){
-        reorderTabs(tabId, hover.dataset.tid|0);
-        ev.preventDefault?.();                              // 拖曳完成:別再觸發 click 切換分頁
-        ev.stopPropagation?.();
-      }
-    };
-
-    // pointermove 必須 non-passive,才能在拖曳期間 preventDefault 阻止捲動
-    row.addEventListener("pointermove", onMove, {passive:false});
-    row.addEventListener("pointerup", finish);
-    row.addEventListener("pointercancel", finish);
+/* 「移至其他分頁」:在該列下方展開/收合一排分頁按鈕,點哪個搬哪個 */
+function toggleMoveMenu(li, sym){
+  const existing = li.nextElementSibling;
+  if(existing && existing.classList.contains("m-move-menu")){ existing.remove(); return; }
+  document.querySelectorAll(".m-move-menu").forEach(m=>m.remove());   // 同時間只開一個
+  const menu = document.createElement("li");
+  menu.className = "m-move-menu";
+  menu.innerHTML = `<span class="m-move-hint">移至:</span>` + tabs
+    .filter(t=>t.kind!=="hot" && t.id!==currentTab)
+    .map(t=>`<button class="m-move-btn" data-mv="${t.id}">${escH(t.label)}</button>`).join("");
+  menu.querySelectorAll(".m-move-btn").forEach(b=>{
+    b.addEventListener("click", async ()=>{
+      Store.moveItem(sym, b.dataset.mv|0);
+      await loadAll();
+    });
   });
+  li.after(menu);
 }
 
 function bindTabBarScroll(row){
@@ -808,14 +824,21 @@ function currentTabObj(){ return tabs.find(t=>t.id===currentTab); }
 function isHotTab(){ const t=currentTabObj(); return !!t && t.kind==="hot"; }
 
 function liHTML(w){
-  // 手機時 draggable=false,同樣的原因:draggable="true" 會讓瀏覽器把手指移動判為
-  // 「等待 native drag」,結果縱向捲動被卡住 —— 這是清單無法上下滑動的元凶。
+  // 手機不用 HTML5 drag;排序走「編輯模式」按鈕(▲ ▼ ⇄)。
   const drag = !isMobile();
+  const edit = isMobile() && mobileEdit && !isHotTab();   // 熱門股唯讀,不進編輯
+  const tail = edit
+    ? `<span class="m-tools">
+         <button class="m-nudge" data-up="${w.symbol}">▲</button>
+         <button class="m-nudge" data-down="${w.symbol}">▼</button>
+         <button class="m-nudge m-move" data-move="${w.symbol}" title="移至其他分頁">⇄</button>
+       </span>`
+    : `<span class="li-badges" data-badge="${w.symbol}">${renderBadgeHTML(w.symbol)}</span>
+      <button class="x" data-del="${w.symbol}">×</button>`;
   return `<li draggable="${drag}" data-sym="${w.symbol}" class="${w.symbol===current?'active':''}">
       <span class="grip">⠿</span>
       <span class="li-id"><span class="sym">${w.symbol}</span><span class="nm">${escH(w.name&&w.name!==w.symbol?w.name:"")}</span></span>
-      <span class="li-badges" data-badge="${w.symbol}">${renderBadgeHTML(w.symbol)}</span>
-      <button class="x" data-del="${w.symbol}">×</button>
+      ${tail}
     </li>`;
 }
 
@@ -857,11 +880,19 @@ function renderList(){
 
   let draggingSym=null;
   ul.querySelectorAll("li[data-sym]").forEach(li=>{
-    li.addEventListener("click", e=>{ if(e.target.dataset.del) return; select(li.dataset.sym); });
-    li.querySelector(".x").addEventListener("click", e=>{ e.stopPropagation(); del(li.dataset.sym); });
+    li.addEventListener("click", e=>{
+      // 編輯模式按鈕或刪除鈕:不觸發選股
+      if(e.target.dataset.del || e.target.closest?.(".m-tools")) return;
+      select(li.dataset.sym);
+    });
+    li.querySelector(".x")?.addEventListener("click", e=>{ e.stopPropagation(); del(li.dataset.sym); });
 
-    // 手機時完全不綁 drag 事件:讓觸控只走 click(選股)與 button click(刪除),
-    // 這樣 #list 的縱向捲動不會被任何 dragover/dragleave/drop 干擾。
+    // 編輯模式:▲ ▼ ⇄ 按鈕
+    li.querySelector("[data-up]")  ?.addEventListener("click", e=>{ e.stopPropagation(); nudgeItem(li.dataset.sym, -1); });
+    li.querySelector("[data-down]")?.addEventListener("click", e=>{ e.stopPropagation(); nudgeItem(li.dataset.sym, +1); });
+    li.querySelector("[data-move]")?.addEventListener("click", e=>{ e.stopPropagation(); toggleMoveMenu(li, li.dataset.sym); });
+
+    // 手機時不綁任何 drag 事件:觸控只有 click,#list 縱向捲動零干擾。
     if(isMobile()) return;
 
     /* 桌面版 HTML5 drag & drop:同 tab 內排序、跨 tab 搬移(手機在上面已 return) */
@@ -1986,7 +2017,11 @@ function drawPE(I, thr){
 const MOBILE_MQ = window.matchMedia("(max-width:680px), (orientation:landscape) and (max-height:500px)");
 const isMobile = () => MOBILE_MQ.matches;
 function openDrawer(){ document.body.classList.add("drawer-open"); }
-function closeDrawer(){ document.body.classList.remove("drawer-open"); }
+function closeDrawer(){
+  document.body.classList.remove("drawer-open");
+  if(mobileEdit) toggleMobileEdit();                 // 關抽屜時自動退出編輯模式,回到乾淨狀態
+}
+document.getElementById("m-edit-toggle")?.addEventListener("click", toggleMobileEdit);
 document.getElementById("drawer-fab")?.addEventListener("click", openDrawer);
 document.getElementById("drawer-close")?.addEventListener("click", closeDrawer);
 document.getElementById("drawer-backdrop")?.addEventListener("click", closeDrawer);
